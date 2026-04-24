@@ -1,0 +1,15 @@
+services:
+  neko-study:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: neko-study
+    ports:
+      - "0.0.0.0:3001:3001"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3001
+      TZ: Asia/Shanghai
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
