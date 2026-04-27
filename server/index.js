@@ -270,6 +270,10 @@ function getQuestionBankById(bankId) {
   return getQuestionBanks().find((bank) => bank.id === bankId) || null;
 }
 
+function getQuestionBankType(bank) {
+  return String(bank?.type || "未分类").trim() || "未分类";
+}
+
 function getQuestionById(questionId) {
   return getQuestions().find((question) => question.id === questionId) || null;
 }
@@ -278,6 +282,7 @@ function serializeQuestionBank(bank) {
   return {
     id: bank.id,
     name: bank.name,
+    type: bank.type ?? "",
     description: bank.description ?? "",
     createdBy: bank.created_by ?? null,
     createdAt: bank.created_at,
@@ -1051,6 +1056,7 @@ app.get("/api/admin/question-banks", requireAuth, requireAdmin, (_req, res) => {
 
 app.post("/api/admin/question-banks", requireAuth, requireAdmin, (req, res) => {
   const name = String(req.body?.name || "").trim();
+  const type = String(req.body?.type || "").trim();
   const description = String(req.body?.description || "").trim();
 
   if (!name) {
@@ -1060,6 +1066,7 @@ app.post("/api/admin/question-banks", requireAuth, requireAdmin, (req, res) => {
   const bank = {
     id: store.nextId("question_banks"),
     name,
+    type,
     description,
     created_by: req.user.id,
     created_at: store.now(),
@@ -1079,6 +1086,7 @@ app.put("/api/admin/question-banks/:id", requireAuth, requireAdmin, (req, res) =
   }
 
   const name = String(req.body?.name || "").trim();
+  const type = String(req.body?.type || "").trim();
   const description = String(req.body?.description || "").trim();
 
   if (!name) {
@@ -1086,6 +1094,7 @@ app.put("/api/admin/question-banks/:id", requireAuth, requireAdmin, (req, res) =
   }
 
   bank.name = name;
+  bank.type = type;
   bank.description = description;
   store.save();
   res.json(serializeQuestionBank(bank));
@@ -1653,26 +1662,41 @@ app.post("/api/practice/submit", requireAuth, (req, res) => {
 });
 
 app.post("/api/exams/generate", requireAuth, (req, res) => {
-  const bankId = normalizeBankId(req.body?.bankId);
-  const types = normalizeTypeList(req.body?.types);
-  const count = Math.min(Math.max(Number(req.body?.count) || 10, 1), 100);
+  const bankType = String(req.body?.bankType || "").trim();
+  const typeCountsInput = req.body?.typeCounts && typeof req.body.typeCounts === "object"
+    ? req.body.typeCounts
+    : {};
   const title = String(req.body?.title || "Custom Paper").trim();
 
-  if (!bankId) {
-    return res.status(400).json({ message: "Please choose a question bank first." });
+  if (!bankType) {
+    return res.status(400).json({ message: "Please choose a question bank type first." });
   }
 
-  const bank = ensureQuestionBank(bankId);
+  const banks = getQuestionBanks().filter((bank) => getQuestionBankType(bank) === bankType);
 
-  if (!bank) {
-    return res.status(404).json({ message: "Question bank not found." });
+  if (banks.length === 0) {
+    return res.status(404).json({ message: "Question bank type not found." });
   }
 
-  const effectiveTypes = types.length > 0 ? types : QUESTION_TYPES.map((type) => type.value);
-  const sourceQuestions = getQuestions().filter(
-    (question) => question.bank_id === bank.id && effectiveTypes.includes(question.type)
-  );
-  const questions = pickRandom(sourceQuestions, count);
+  const bankIds = new Set(banks.map((bank) => bank.id));
+  const requestedTypes = QUESTION_TYPES
+    .map((type) => type.value)
+    .map((type) => ({
+      type,
+      count: Math.min(Math.max(Number(typeCountsInput[type]) || 0, 0), 100),
+    }))
+    .filter((item) => item.count > 0);
+
+  if (requestedTypes.length === 0) {
+    return res.status(400).json({ message: "Please choose at least one question type and count." });
+  }
+
+  const questions = requestedTypes.flatMap((item) => {
+    const sourceQuestions = getQuestions().filter(
+      (question) => bankIds.has(question.bank_id) && question.type === item.type
+    );
+    return pickRandom(sourceQuestions, item.count);
+  });
 
   if (questions.length === 0) {
     return res.status(400).json({ message: "No questions are available for this filter." });
@@ -1684,7 +1708,7 @@ app.post("/api/exams/generate", requireAuth, (req, res) => {
     id: paperId,
     user_id: req.user.id,
     title,
-    selected_types: effectiveTypes,
+    selected_types: requestedTypes.map((item) => item.type),
     question_ids: questions.map((item) => item.id),
     status: "pending",
     score: 0,
@@ -1696,10 +1720,11 @@ app.post("/api/exams/generate", requireAuth, (req, res) => {
 
   res.status(201).json({
     paperId,
-    bankId: bank.id,
-    bankName: bank.name,
+    bankType,
+    bankName: bankType,
     title,
     total: questions.length,
+    typeCounts: Object.fromEntries(requestedTypes.map((item) => [item.type, item.count])),
     questions: questions.map(sanitizeQuestionForStudent),
   });
 });

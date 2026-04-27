@@ -72,6 +72,29 @@ function getQuestionBankName(banks, bankId) {
   return banks.find((bank) => bank.id === Number(bankId))?.name || "";
 }
 
+function getBankType(bank) {
+  return String(bank?.type || "未分类").trim() || "未分类";
+}
+
+function getBankTypeOptions(banks) {
+  return Array.from(new Set(banks.map(getBankType))).sort((a, b) => a.localeCompare(b, "zh-CN"));
+}
+
+function BankTypeFilter({ banks, value, onChange }) {
+  const options = getBankTypeOptions(banks);
+
+  return (
+    <select onChange={(event) => onChange(event.target.value)} value={value}>
+      <option value="">全部类型</option>
+      {options.map((type) => (
+        <option key={type} value={type}>
+          {type}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function AuthCard({ onLogin, onRegister, loading, error }) {
   const [mode, setMode] = useState("login");
   const [username, setUsername] = useState("");
@@ -203,7 +226,58 @@ function BankSelector({
   );
 }
 
-function AnswerInput({ question, value, onChange, disabled = false }) {
+function getChoiceFeedbackClass(question, optionLabel, value, feedback) {
+  if (!feedback || !question || !["single_choice", "multiple_choice"].includes(question.type)) {
+    return "";
+  }
+
+  const correctLabels = String(feedback.correctAnswer || "")
+    .split(",")
+    .map((item) => item.trim().toUpperCase())
+    .filter(Boolean);
+  const selectedLabels = Array.isArray(value)
+    ? value.map((item) => String(item).trim().toUpperCase())
+    : [String(value ?? "").trim().toUpperCase()].filter(Boolean);
+  const label = String(optionLabel).trim().toUpperCase();
+
+  if (correctLabels.includes(label)) {
+    return "answer-correct";
+  }
+
+  if (selectedLabels.includes(label)) {
+    return "answer-wrong";
+  }
+
+  return "";
+}
+
+function getBooleanFeedbackClass(optionValue, feedback) {
+  if (!feedback) {
+    return "";
+  }
+
+  const correctAnswer = String(feedback.correctAnswer || "").trim().toLowerCase();
+  const isCorrectOption =
+    correctAnswer === String(optionValue) ||
+    (optionValue === true && ["true", "correct", "t", "正确"].includes(correctAnswer)) ||
+    (optionValue === false && ["false", "wrong", "f", "错误"].includes(correctAnswer));
+
+  if (isCorrectOption) {
+    return "answer-correct";
+  }
+
+  if (feedback.userAnswer === optionValue || feedback.yourAnswer === optionValue) {
+    return "answer-wrong";
+  }
+
+  return "";
+}
+
+function joinClassNames(...classNames) {
+  return classNames.filter(Boolean).join(" ");
+}
+
+function AnswerInput({ question, value, onChange, disabled = false, feedback = null }) {
   if (!question) {
     return null;
   }
@@ -212,7 +286,10 @@ function AnswerInput({ question, value, onChange, disabled = false }) {
     return (
       <div className="answer-stack">
         {question.options.map((option) => (
-          <label className="option-card" key={option.label}>
+          <label
+            className={joinClassNames("option-card", getChoiceFeedbackClass(question, option.label, value, feedback))}
+            key={option.label}
+          >
             <input
               checked={value === option.label}
               disabled={disabled}
@@ -235,7 +312,10 @@ function AnswerInput({ question, value, onChange, disabled = false }) {
     return (
       <div className="answer-stack">
         {question.options.map((option) => (
-          <label className="option-card" key={option.label}>
+          <label
+            className={joinClassNames("option-card", getChoiceFeedbackClass(question, option.label, value, feedback))}
+            key={option.label}
+          >
             <input
               checked={current.includes(option.label)}
               disabled={disabled}
@@ -261,7 +341,11 @@ function AnswerInput({ question, value, onChange, disabled = false }) {
     return (
       <div className="boolean-actions">
         <button
-          className={value === true ? "ghost-btn selected" : "ghost-btn"}
+          className={joinClassNames(
+            "ghost-btn",
+            value === true ? "selected" : "",
+            getBooleanFeedbackClass(true, feedback)
+          )}
           disabled={disabled}
           onClick={() => onChange(true)}
           type="button"
@@ -269,7 +353,11 @@ function AnswerInput({ question, value, onChange, disabled = false }) {
           正确
         </button>
         <button
-          className={value === false ? "ghost-btn selected" : "ghost-btn"}
+          className={joinClassNames(
+            "ghost-btn",
+            value === false ? "selected" : "",
+            getBooleanFeedbackClass(false, feedback)
+          )}
           disabled={disabled}
           onClick={() => onChange(false)}
           type="button"
@@ -487,6 +575,7 @@ function PracticePanel({ api, banks, onRefreshSummary, showMessage }) {
                 <span className="bank-id">#{bank.id}</span>
               </div>
               <h3 className="bank-name">{bank.name}</h3>
+              <div className="muted" style={{ marginBottom: 8 }}>类型：{getBankType(bank)}</div>
               <p className="bank-desc">{bank.description || "暂无简介"}</p>
             </div>
           ))}
@@ -574,7 +663,13 @@ function PracticePanel({ api, banks, onRefreshSummary, showMessage }) {
             <span>#{currentQuestion.id}</span>
           </div>
           <h3>{currentQuestion.stem}</h3>
-          <AnswerInput disabled={Boolean(currentResult)} onChange={handleAnswerChange} question={currentQuestion} value={answer} />
+          <AnswerInput
+            disabled={Boolean(currentResult)}
+            feedback={currentResult}
+            onChange={handleAnswerChange}
+            question={currentQuestion}
+            value={answer}
+          />
 
           <div className="inline-actions">
             <button className="ghost-btn" disabled={currentIndex === 0} onClick={handlePrev} type="button">
@@ -615,6 +710,7 @@ function PracticePanel({ api, banks, onRefreshSummary, showMessage }) {
 function PracticePanelV2({ api, banks, onRefreshBanks, onRefreshSummary, showMessage }) {
   const [phase, setPhase] = useState("selecting");
   const [selectedBankId, setSelectedBankId] = useState("");
+  const [bankTypeFilter, setBankTypeFilter] = useState("");
   const [selectedTypes, setSelectedTypes] = useState(QUESTION_TYPES.map((item) => item.value));
   const [mode, setMode] = useState("sequential");
   const [limit, setLimit] = useState(0);
@@ -626,6 +722,10 @@ function PracticePanelV2({ api, banks, onRefreshBanks, onRefreshSummary, showMes
 
   const currentQuestion = questions[currentIndex];
   const selectedBank = banks.find((bank) => String(bank.id) === String(selectedBankId));
+  const filteredBanks = useMemo(
+    () => banks.filter((bank) => (bankTypeFilter ? getBankType(bank) === bankTypeFilter : true)),
+    [banks, bankTypeFilter]
+  );
   const currentResult = currentQuestion ? results[currentQuestion.id] : null;
 
   useEffect(() => {
@@ -800,6 +900,10 @@ function PracticePanelV2({ api, banks, onRefreshBanks, onRefreshSummary, showMes
       <section className="panel">
         <div className="toolbar-grid">
           <div className="toolbar-block">
+            <span className="toolbar-title">题库类型</span>
+            <BankTypeFilter banks={banks} onChange={setBankTypeFilter} value={bankTypeFilter} />
+          </div>
+          <div className="toolbar-block">
             <span className="toolbar-title">题型筛选</span>
             <TypeSelector onChange={setSelectedTypes} selectedTypes={selectedTypes} />
           </div>
@@ -835,7 +939,7 @@ function PracticePanelV2({ api, banks, onRefreshBanks, onRefreshSummary, showMes
         </div>
 
         <div className="bank-grid">
-          {banks.map((bank) => (
+          {filteredBanks.map((bank) => (
             <div className="bank-card" key={bank.id}>
               <div className="bank-meta">
                 <span className="bank-badge">{bank.questionCount} 题</span>
@@ -843,6 +947,7 @@ function PracticePanelV2({ api, banks, onRefreshBanks, onRefreshSummary, showMes
               </div>
               <h3 className="bank-name">{bank.name}</h3>
               <p className="bank-desc">{bank.description || "暂无简介"}</p>
+              <div className="muted" style={{ marginBottom: 8 }}>类型：{getBankType(bank)}</div>
               {bank.practiceProgress?.hasProgress ? (
                 <div className="muted" style={{ marginBottom: 12, fontSize: '14px' }}>
                   上次进度：第 {bank.practiceProgress.currentIndex + 1} / {bank.practiceProgress.total} 题
@@ -874,7 +979,7 @@ function PracticePanelV2({ api, banks, onRefreshBanks, onRefreshSummary, showMes
               </div>
             </div>
           ))}
-          {banks.length === 0 ? <div className="empty-state">当前还没有可练习的题库</div> : null}
+          {filteredBanks.length === 0 ? <div className="empty-state">当前没有符合类型筛选的题库</div> : null}
         </div>
       </section>
     );
@@ -904,6 +1009,7 @@ function PracticePanelV2({ api, banks, onRefreshBanks, onRefreshSummary, showMes
           <h3>{currentQuestion.stem}</h3>
           <AnswerInput
             disabled={Boolean(currentResult)}
+            feedback={currentResult}
             onChange={handleAnswerChange}
             question={currentQuestion}
             value={answer}
@@ -948,6 +1054,7 @@ function PracticePanelV2({ api, banks, onRefreshBanks, onRefreshSummary, showMes
 function MemorizePanel({ api, banks, onRefreshBanks, showMessage }) {
   const [phase, setPhase] = useState("selecting");
   const [selectedBankId, setSelectedBankId] = useState("");
+  const [bankTypeFilter, setBankTypeFilter] = useState("");
   const [selectedTypes, setSelectedTypes] = useState(QUESTION_TYPES.map((item) => item.value));
   const [mode, setMode] = useState("sequential");
   const [limit, setLimit] = useState(0);
@@ -957,6 +1064,10 @@ function MemorizePanel({ api, banks, onRefreshBanks, showMessage }) {
 
   const currentQuestion = questions[currentIndex];
   const selectedBank = banks.find((bank) => String(bank.id) === String(selectedBankId));
+  const filteredBanks = useMemo(
+    () => banks.filter((bank) => (bankTypeFilter ? getBankType(bank) === bankTypeFilter : true)),
+    [banks, bankTypeFilter]
+  );
 
   async function persistProgress(bankId, nextIndex) {
     if (!bankId) {
@@ -1063,6 +1174,10 @@ function MemorizePanel({ api, banks, onRefreshBanks, showMessage }) {
       <section className="panel">
         <div className="toolbar-grid">
           <div className="toolbar-block">
+            <span className="toolbar-title">题库类型</span>
+            <BankTypeFilter banks={banks} onChange={setBankTypeFilter} value={bankTypeFilter} />
+          </div>
+          <div className="toolbar-block">
             <span className="toolbar-title">题型筛选</span>
             <TypeSelector onChange={setSelectedTypes} selectedTypes={selectedTypes} />
           </div>
@@ -1098,7 +1213,7 @@ function MemorizePanel({ api, banks, onRefreshBanks, showMessage }) {
         </div>
 
         <div className="bank-grid">
-          {banks.map((bank) => (
+          {filteredBanks.map((bank) => (
             <div className="bank-card" key={bank.id}>
               <div className="bank-meta">
                 <span className="bank-badge">{bank.questionCount} 题</span>
@@ -1106,6 +1221,7 @@ function MemorizePanel({ api, banks, onRefreshBanks, showMessage }) {
               </div>
               <h3 className="bank-name">{bank.name}</h3>
               <p className="bank-desc">{bank.description || "暂无简介"}</p>
+              <div className="muted" style={{ marginBottom: 8 }}>类型：{getBankType(bank)}</div>
               {bank.memorizationProgress?.hasProgress ? (
                 <div className="muted" style={{ marginBottom: 12, fontSize: "14px" }}>
                   上次进度：第 {bank.memorizationProgress.currentIndex + 1} / {bank.memorizationProgress.total} 题
@@ -1137,7 +1253,7 @@ function MemorizePanel({ api, banks, onRefreshBanks, showMessage }) {
               </div>
             </div>
           ))}
-          {banks.length === 0 ? <div className="empty-state">当前还没有可背题的题库</div> : null}
+          {filteredBanks.length === 0 ? <div className="empty-state">当前没有符合类型筛选的题库</div> : null}
         </div>
       </section>
     );
@@ -1204,28 +1320,47 @@ function MemorizePanel({ api, banks, onRefreshBanks, showMessage }) {
 }
 
 function ExamPanel({ api, banks, onRefreshSummary, showMessage }) {
-  const [selectedBankId, setSelectedBankId] = useState("");
+  const [selectedBankType, setSelectedBankType] = useState("");
   const [selectedTypes, setSelectedTypes] = useState(QUESTION_TYPES.map((item) => item.value));
-  const [count, setCount] = useState(10);
+  const [typeCounts, setTypeCounts] = useState(() =>
+    Object.fromEntries(QUESTION_TYPES.map((item) => [item.value, 5]))
+  );
   const [paper, setPaper] = useState(null);
   const [answers, setAnswers] = useState({});
   const [result, setResult] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const bankTypeOptions = useMemo(() => getBankTypeOptions(banks), [banks]);
 
   useEffect(() => {
-    if (!selectedBankId && banks.length > 0) {
-      setSelectedBankId(String(banks[0].id));
+    if (!selectedBankType && bankTypeOptions.length > 0) {
+      setSelectedBankType(bankTypeOptions[0]);
       return;
     }
 
-    if (selectedBankId && !banks.some((bank) => String(bank.id) === String(selectedBankId))) {
-      setSelectedBankId(banks.length > 0 ? String(banks[0].id) : "");
+    if (selectedBankType && !bankTypeOptions.includes(selectedBankType)) {
+      setSelectedBankType(bankTypeOptions[0] || "");
     }
-  }, [banks, selectedBankId]);
+  }, [bankTypeOptions, selectedBankType]);
 
   async function generatePaper() {
-    if (!selectedBankId) {
-      showMessage("请先选择题库", "error");
+    if (!selectedBankType) {
+      showMessage("请先选择题库类型", "error");
+      return;
+    }
+
+    if (selectedTypes.length === 0) {
+      showMessage("请至少选择一种题型", "error");
+      return;
+    }
+
+    const selectedTypeCounts = Object.fromEntries(
+      selectedTypes
+        .map((type) => [type, Math.min(Math.max(Number(typeCounts[type]) || 0, 0), 100)])
+        .filter(([, countValue]) => countValue > 0)
+    );
+
+    if (Object.keys(selectedTypeCounts).length === 0) {
+      showMessage("请为已选择的题型设置题目数量", "error");
       return;
     }
 
@@ -1233,9 +1368,8 @@ function ExamPanel({ api, banks, onRefreshSummary, showMessage }) {
       const data = await api("/api/exams/generate", {
         method: "POST",
         body: JSON.stringify({
-          bankId: Number(selectedBankId),
-          types: selectedTypes,
-          count,
+          bankType: selectedBankType,
+          typeCounts: selectedTypeCounts,
           title: `自定义试卷 ${new Date().toLocaleString()}`,
         }),
       });
@@ -1284,28 +1418,46 @@ function ExamPanel({ api, banks, onRefreshSummary, showMessage }) {
 
       <div className="toolbar">
         <div className="toolbar-block">
-          <span className="toolbar-title">题库</span>
-          <BankSelector
-            banks={banks}
-            onChange={setSelectedBankId}
-            placeholder="请先选择题库"
-            value={selectedBankId}
-          />
+          <span className="toolbar-title">题库类型</span>
+          <select onChange={(event) => setSelectedBankType(event.target.value)} value={selectedBankType}>
+            {bankTypeOptions.length === 0 ? <option value="">暂无题库类型</option> : null}
+            {bankTypeOptions.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="toolbar-block">
           <span className="toolbar-title">题型范围</span>
           <TypeSelector onChange={setSelectedTypes} selectedTypes={selectedTypes} />
         </div>
-        <label className="count-input">
-          <span>题目数量</span>
-          <input
-            max={100}
-            min={1}
-            onChange={(event) => setCount(Number(event.target.value))}
-            type="number"
-            value={count}
-          />
-        </label>
+        <div className="toolbar-block exam-counts">
+          <span className="toolbar-title">各题型数量</span>
+          {selectedTypes.length > 0 ? (
+            <div className="exam-count-grid">
+              {selectedTypes.map((type) => (
+                <label className="count-input" key={type}>
+                  <span>{formatTypeLabel(type)}</span>
+                  <input
+                    max={100}
+                    min={0}
+                    onChange={(event) =>
+                      setTypeCounts((current) => ({
+                        ...current,
+                        [type]: Number(event.target.value),
+                      }))
+                    }
+                    type="number"
+                    value={typeCounts[type] ?? 0}
+                  />
+                </label>
+              ))}
+            </div>
+          ) : (
+            <span className="muted">请先选择题型</span>
+          )}
+        </div>
         <button className="primary-btn" onClick={generatePaper} type="button">
           生成试卷
         </button>
@@ -1317,7 +1469,7 @@ function ExamPanel({ api, banks, onRefreshSummary, showMessage }) {
             <div>
               <h3>{paper.title}</h3>
               <p className="muted">
-                当前题库：{paper.bankName}，共 {paper.total} 道题。
+                题库类型：{paper.bankType || paper.bankName}，共 {paper.total} 道题。
               </p>
             </div>
             {!result ? (
@@ -1328,28 +1480,34 @@ function ExamPanel({ api, banks, onRefreshSummary, showMessage }) {
           </div>
 
           <div className="exam-list">
-            {paper.questions.map((question, index) => (
-              <div className="exam-question" key={question.id}>
-                <div className="question-meta">
-                  <span>
-                    {index + 1}. {formatTypeLabel(question.type)}
-                  </span>
-                  <span>{question.bankName}</span>
+            {paper.questions.map((question, index) => {
+              const detail = result?.details.find((item) => item.id === question.id);
+              const answerValue = detail?.yourAnswer ?? answers[question.id] ?? getEmptyAnswer(question.type);
+
+              return (
+                <div className="exam-question" key={question.id}>
+                  <div className="question-meta">
+                    <span>
+                      {index + 1}. {formatTypeLabel(question.type)}
+                    </span>
+                    <span>{question.bankName}</span>
+                  </div>
+                  <h4>{question.stem}</h4>
+                  <AnswerInput
+                    disabled={Boolean(result)}
+                    feedback={detail}
+                    onChange={(value) =>
+                      setAnswers((current) => ({
+                        ...current,
+                        [question.id]: value,
+                      }))
+                    }
+                    question={question}
+                    value={answerValue}
+                  />
                 </div>
-                <h4>{question.stem}</h4>
-                <AnswerInput
-                  disabled={Boolean(result)}
-                  onChange={(value) =>
-                    setAnswers((current) => ({
-                      ...current,
-                      [question.id]: value,
-                    }))
-                  }
-                  question={question}
-                  value={answers[question.id] ?? getEmptyAnswer(question.type)}
-                />
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {result ? (
@@ -1370,7 +1528,7 @@ function ExamPanel({ api, banks, onRefreshSummary, showMessage }) {
           ) : null}
         </div>
       ) : (
-        <div className="empty-state">选择题库和题型范围后，即可随机生成一份考试试卷。</div>
+        <div className="empty-state">选择题库类型、题型和各题型数量后，即可随机生成一份考试试卷。</div>
       )}
     </section>
   );
@@ -1824,7 +1982,7 @@ function buildQuestionPayload(draft, bankId) {
 function AdminQuestionBankPanel({ api, userBanks, onRefreshBanks, onRefreshSummary, showMessage }) {
   const [banks, setBanks] = useState([]);
   const [selectedBankId, setSelectedBankId] = useState("");
-  const [bankForm, setBankForm] = useState({ name: "", description: "" });
+  const [bankForm, setBankForm] = useState({ name: "", type: "", description: "" });
   const [editingBankId, setEditingBankId] = useState(null);
   const [savingBank, setSavingBank] = useState(false);
 
@@ -1910,7 +2068,7 @@ function AdminQuestionBankPanel({ api, userBanks, onRefreshBanks, onRefreshSumma
   }, [userBanks, banks.length]);
 
   function resetBankForm() {
-    setBankForm({ name: "", description: "" });
+    setBankForm({ name: "", type: "", description: "" });
     setEditingBankId(null);
     setIsBankModalOpen(false);
   }
@@ -1949,6 +2107,7 @@ function AdminQuestionBankPanel({ api, userBanks, onRefreshBanks, onRefreshSumma
     setEditingBankId(bank.id);
     setBankForm({
       name: bank.name,
+      type: bank.type || "",
       description: bank.description || "",
     });
     setSelectedBankId(String(bank.id));
@@ -2396,6 +2555,7 @@ function AdminQuestionBankPanel({ api, userBanks, onRefreshBanks, onRefreshSumma
               <span className="bank-id">#{bank.id}</span>
             </div>
             <h3 className="bank-name">{bank.name}</h3>
+            <div className="muted" style={{ marginBottom: 8 }}>类型：{getBankType(bank)}</div>
             <p className="bank-desc">{bank.description || "暂无简介"}</p>
             <div className="bank-actions" onClick={(e) => e.stopPropagation()}>
               <button className="text-btn" onClick={() => startEditBank(bank)} type="button">
@@ -2504,6 +2664,14 @@ function AdminQuestionBankPanel({ api, userBanks, onRefreshBanks, onRefreshSumma
                 onChange={(event) => setBankForm((current) => ({ ...current, name: event.target.value }))}
                 placeholder="请输入题库名称"
                 value={bankForm.name}
+              />
+            </label>
+            <label>
+              <span>题库类型</span>
+              <input
+                onChange={(event) => setBankForm((current) => ({ ...current, type: event.target.value }))}
+                placeholder="例如：初级、中级、专项、模拟卷"
+                value={bankForm.type}
               />
             </label>
             <label>

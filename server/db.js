@@ -143,6 +143,7 @@ function createSchema(db) {
     CREATE TABLE IF NOT EXISTS question_banks (
       id INTEGER PRIMARY KEY,
       name TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT '',
       description TEXT NOT NULL DEFAULT '',
       created_by INTEGER,
       created_at TEXT NOT NULL
@@ -261,6 +262,10 @@ function ensureSchemaCompatibility(db) {
     db.run("ALTER TABLE questions ADD COLUMN bank_id INTEGER");
   }
 
+  if (!columnExists(db, "question_banks", "type")) {
+    db.run("ALTER TABLE question_banks ADD COLUMN type TEXT NOT NULL DEFAULT ''");
+  }
+
   createSchema(db);
 }
 
@@ -278,6 +283,7 @@ function readState(db) {
   state.question_banks = readAll(db, "SELECT * FROM question_banks ORDER BY id ASC", (row) => ({
     id: Number(row.id),
     name: row.name,
+    type: row.type ?? "",
     description: row.description ?? "",
     created_by: row.created_by === null ? null : Number(row.created_by),
     created_at: row.created_at,
@@ -413,13 +419,14 @@ function writeState(db, inputState) {
     insertUser.free();
 
     const insertBank = db.prepare(`
-      INSERT INTO question_banks (id, name, description, created_by, created_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO question_banks (id, name, type, description, created_by, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
     `);
     for (const item of state.question_banks) {
       insertBank.run([
         item.id,
         item.name,
+        item.type ?? "",
         item.description ?? "",
         item.created_by ?? null,
         item.created_at,
