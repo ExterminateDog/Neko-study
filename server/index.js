@@ -216,8 +216,13 @@ function restoreBackupState(payload) {
     payload && typeof payload === "object" && payload.state && typeof payload.state === "object"
       ? payload.state
       : payload;
+  const restoredState = normalizeBackupState(candidate);
 
-  store.state = normalizeBackupState(candidate);
+  for (const key of Object.keys(store.state)) {
+    delete store.state[key];
+  }
+
+  Object.assign(store.state, restoredState);
   store.save();
   return store.state;
 }
